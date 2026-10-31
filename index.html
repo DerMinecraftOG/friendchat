@@ -1,152 +1,37 @@
 <!doctype html>
 <html lang="de">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#f7f8fc">
-  <title>FriendChat</title>
-  <link rel="stylesheet" href="style.css">
-  <!-- Supabase JS v2 CDN: kein npm oder Build-Schritt nötig -->
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="script.js" defer></script>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="theme-color" content="#5865f2"><title>FriendChat</title>
+<link rel="stylesheet" href="style.css">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 <body>
-  <main id="auth-view" class="auth-shell">
-    <section class="auth-art">
-      <div class="brand"><span class="brand-mark">✦</span> FriendChat</div>
-      <div class="auth-art-copy">
-        <span class="eyebrow">DEIN RAUM. DEINE LEUTE.</span>
-        <h1>Gute Gespräche<br><span>beginnen hier.</span></h1>
-        <p>Ein kleiner Ort für deine Freunde, deine Gedanken und all die Dinge, die man teilen möchte.</p>
-        <div class="floating-bubbles"><span>👋 Hey!</span><span>✨ nice</span><span>💬 online zusammen</span></div>
-      </div>
-      <div class="art-footer">Einfach verbunden.</div>
-    </section>
-    <section class="auth-panel">
-      <form id="auth-form" class="auth-card">
-        <div class="mobile-brand brand"><span class="brand-mark">✦</span> FriendChat</div>
-        <div class="auth-heading">
-          <span id="auth-eyebrow" class="eyebrow">WILLKOMMEN ZURÜCK</span>
-          <h2 id="auth-title">Melde dich an</h2>
-          <p id="auth-description">Melde dich an und schreib deinen Freunden.</p>
-        </div>
-        <label id="username-label" class="hidden">Benutzername
-          <input id="auth-username" autocomplete="username" minlength="3" maxlength="20" placeholder="z. B. pixel_fox">
-        </label>
-        <label>E-Mail-Adresse
-          <input id="auth-email" type="email" autocomplete="email" placeholder="du@beispiel.de" required>
-        </label>
-        <label>Passwort
-          <input id="auth-password" type="password" autocomplete="current-password" minlength="8" placeholder="Mindestens 8 Zeichen" required>
-        </label>
-        <p id="auth-message" class="alert hidden" role="status"></p>
-        <button id="auth-submit" class="primary full" type="submit">Anmelden <span>→</span></button>
-        <p class="switch-auth"><span id="auth-switch-copy">Noch kein Konto?</span>
-          <button id="auth-switch" class="text-button" type="button">Registrieren</button>
-        </p>
-        <p class="fine-print">Du kannst nur mit bestätigten Freunden chatten.</p>
-      </form>
-    </section>
-  </main>
-
-  <div id="app-view" class="app-shell hidden">
-    <aside class="sidebar">
-      <div class="brand sidebar-brand"><span class="brand-mark">✦</span> FriendChat <span class="brand-dot"></span></div>
-      <div class="sidebar-label">MENÜ</div>
-      <div class="nav-item active">◉ <span>Nachrichten</span></div>
-      <div class="sidebar-label friend-label">FREUNDE <button id="focus-friend" class="icon-button tiny" type="button" title="Freund hinzufügen">＋</button></div>
-      <form id="friend-form" class="friend-add">
-        <input id="friend-username" placeholder="@Benutzername" aria-label="Benutzername für Freundschaftsanfrage" required>
-        <button class="icon-button add-button" type="submit" title="Anfrage senden">＋</button>
-      </form>
-      <div class="search-wrap">⌕ <input id="friend-search" placeholder="Freunde suchen …" aria-label="Freunde suchen"></div>
-      <div id="friend-list" class="friend-list"></div>
-      <div class="sidebar-bottom">
-        <button id="open-profile" class="profile-mini" type="button">
-          <span id="sidebar-avatar" class="avatar">?</span>
-          <span class="profile-mini-text"><b id="sidebar-username">Dein Profil</b><small>Profil bearbeiten</small></span>
-          <span class="mini-edit">✎</span>
-        </button>
-        <div class="bottom-actions">
-          <button id="theme-toggle" class="icon-button" type="button"><span id="theme-icon">☾</span><span id="theme-label">Dark Mode</span></button>
-          <button id="logout-button" class="icon-button" type="button" title="Abmelden">↪</button>
-        </div>
-      </div>
-    </aside>
-
-    <main class="main-area">
-      <header class="topbar">
-        <div><span class="eyebrow">DEIN PERSÖNLICHER CHAT</span><h1 id="page-title">Dein Nachrichtenraum</h1></div>
-        <button id="top-theme-toggle" class="theme-toggle" type="button" aria-label="Darstellung wechseln">☾</button>
-      </header>
-      <div id="global-message" class="alert hidden" role="status"></div>
-      <section id="requests-card" class="requests-card hidden">
-        <div class="section-heading">♧ <b>Freundschaftsanfragen</b><span id="request-count" class="request-count">0</span></div>
-        <div id="request-list"></div>
-      </section>
-
-      <section id="chat-panel" class="chat-panel hidden">
-        <div class="chat-person">
-          <span id="chat-avatar" class="avatar large">?</span>
-          <div class="chat-person-text"><b id="chat-username"></b><span id="chat-bio">Dein Freund auf FriendChat</span></div>
-          <button id="remove-friend" class="subtle-button" type="button" title="Freundschaft beenden">♧ <span>Freund entfernen</span></button>
-        </div>
-        <div id="message-area" class="message-area"></div>
-        <form id="composer" class="composer-wrap">
-          <div id="emoji-tray" class="emoji-tray hidden"></div>
-          <button id="emoji-toggle" class="icon-button emoji-toggle" type="button" title="Emoji einfügen">☻</button>
-          <input id="message-input" maxlength="4000" placeholder="Nachricht schreiben …" aria-label="Nachricht schreiben" autocomplete="off">
-          <span class="composer-hint">Enter ↵</span>
-          <button class="send-button" type="submit" title="Nachricht senden">➤</button>
-        </form>
-      </section>
-
-      <section id="welcome-panel" class="welcome-panel">
-        <div class="welcome-illustration">
-          <div class="illustration-circle circle-one"></div><div class="illustration-circle circle-two"></div>
-          <div class="illustration-card card-back">✦</div>
-          <div class="illustration-card card-front"><span class="chat-icon">☏</span><span>hey! 👋</span></div>
-          <span class="sparkle sparkle-one">✧</span><span class="sparkle sparkle-two">✦</span>
-        </div>
-        <span class="eyebrow">SCHÖN, DASS DU DA BIST</span>
-        <h2>Deine Leute. Deine Gespräche.</h2>
-        <p>Wähle links einen Freund aus, um zu chatten, oder sende eine Freundschaftsanfrage, um loszulegen.</p>
-        <div class="welcome-pills"><span>● Private Chats</span><span>✦ Dein eigenes Profil</span><span>☻ Emojis inklusive</span></div>
-      </section>
-    </main>
-  </div>
-
-  <div id="profile-modal" class="modal-backdrop hidden">
-    <section class="profile-modal" role="dialog" aria-modal="true" aria-labelledby="profile-title">
-      <div class="modal-head">
-        <div><span class="eyebrow">DEIN AUFTRITT</span><h2 id="profile-title">Profil bearbeiten</h2></div>
-        <button id="close-profile" class="icon-button" type="button" aria-label="Schließen">×</button>
-      </div>
-      <div class="profile-preview">
-        <div id="banner-preview" class="banner-preview">
-          <button id="banner-upload-button" class="banner-edit" type="button">▧ Banner ändern</button>
-          <input id="banner-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
-        </div>
-        <div class="avatar-edit-row">
-          <span id="profile-avatar-preview" class="avatar xl">?</span>
-          <div><b>Profilbild</b><p>Ein Bild, an dem Freunde dich erkennen.</p>
-            <button id="avatar-upload-button" class="outline-button" type="button">▧ Bild hochladen</button>
-            <input id="avatar-file" type="file" accept="image/png,image/jpeg,image/webp,image/gif" hidden>
-          </div>
-        </div>
-      </div>
-      <form id="profile-form" class="profile-form">
-        <label>Benutzername
-          <input id="profile-username" minlength="3" maxlength="20" required>
-          <small>3–20 Zeichen, Buchstaben, Zahlen und Unterstriche.</small>
-        </label>
-        <label>Bio <span id="bio-count" class="char-count">0/180</span>
-          <textarea id="profile-bio" maxlength="180" rows="3" placeholder="Erzähl ein bisschen über dich …"></textarea>
-        </label>
-        <div class="profile-modal-actions"><button id="cancel-profile" class="outline-button" type="button">Abbrechen</button><button class="primary" type="submit">✓ Änderungen speichern</button></div>
-      </form>
-      <p class="profile-visibility">Dein Benutzername, deine Bio, dein Profilbild und dein Banner sind für angemeldete Nutzer sichtbar.</p>
-    </section>
-  </div>
-</body>
-</html>
+<section id="auth" class="auth-wrap"><div class="auth-card">
+<div class="brand-mark">F</div><h1>FriendChat</h1><p>Deine Community. Deine Chats.</p>
+<form id="auth-form">
+<label>E-Mail<input id="email" type="email" autocomplete="email" required></label>
+<label>Passwort<input id="password" type="password" minlength="8" autocomplete="current-password" required></label>
+<label id="name-wrap" class="hidden">Anzeigename<input id="display-name" maxlength="32"></label>
+<button type="submit" class="primary" id="auth-submit">Anmelden</button>
+</form><button class="text-btn" id="auth-toggle">Noch kein Konto? Registrieren</button>
+<p class="hint" id="auth-hint">Melde dich an oder erstelle ein Konto.</p>
+</div></section>
+<main id="app" class="app hidden">
+<aside class="server-rail"><button class="home active" id="home-btn">F</button><div class="rail-divider"></div><div id="server-list"></div><button class="server-add" id="create-server">＋</button><button class="server-add" id="join-server">↗</button><div class="rail-spacer"></div><button class="avatar-mini" id="my-avatar">?</button></aside>
+<aside class="sidebar"><header class="side-head"><strong id="side-title">Freunde</strong><button id="theme-toggle">◐</button></header>
+<section id="friends-panel" class="panel"><div class="search-wrap"><input id="friend-search" placeholder="Freunde suchen …"><button id="search-btn">⌕</button></div><div id="search-results"></div>
+<h3>Direktnachrichten</h3><div id="dm-list" class="nav-list"></div><h3>Freundschaftsanfragen</h3><div id="requests-list" class="nav-list"></div><button class="outline full" id="profile-open">Mein Profil bearbeiten</button></section>
+<section id="server-panel" class="panel hidden"><div class="server-meta"><span id="server-name">Server</span><button id="create-channel">＋</button></div><h3>TEXTKANÄLE</h3><div id="channel-list" class="nav-list"></div><p class="hint">Teile den Einladungscode mit Freunden.</p><button class="outline full" id="invite-copy">Einladungscode kopieren</button></section>
+<footer class="user-strip"><div class="avatar-small" id="user-avatar">?</div><div class="user-info"><b id="user-name">Account</b><small id="user-status-label">Online</small></div><select id="presence" aria-label="Online-Status"><option value="online">Online</option><option value="idle">Abwesend</option><option value="dnd">Bitte nicht stören</option><option value="offline">Offline</option></select><button id="logout">⇥</button></footer></aside>
+<section class="main-panel"><header class="chat-head"><div><span class="eyebrow" id="chat-context">FRIENDCHAT</span><h2 id="chat-title">Willkommen!</h2></div><span id="chat-subtitle">Wähle einen Chat aus.</span></header>
+<div id="welcome" class="welcome"><div class="welcome-icon">✦</div><h2>Schön, dass du da bist!</h2><p>Wähle links eine Unterhaltung oder öffne einen Server.</p></div><div id="messages" class="messages hidden"></div>
+<form id="message-form" class="message-form hidden"><button type="button" id="emoji-btn">☺</button><input id="message-input" maxlength="4000" placeholder="Nachricht schreiben …" autocomplete="off"><button class="send-btn">Senden</button></form></section></main>
+<dialog id="profile-dialog" class="modal"><form method="dialog" id="profile-form"><div class="modal-head"><h2>Profil bearbeiten</h2><button class="icon-btn" value="cancel">×</button></div>
+<div class="banner-preview" id="banner-preview"><button type="button" id="banner-upload">Banner ändern</button></div><div class="profile-edit-row"><div class="avatar-large" id="avatar-preview">?</div><button type="button" id="avatar-upload">Profilbild ändern</button></div>
+<label>Anzeigename<input id="profile-name" maxlength="32" required></label><label>Über mich<textarea id="profile-bio" maxlength="240" rows="3"></textarea></label>
+<div class="modal-actions"><button class="outline" value="cancel">Abbrechen</button><button class="primary" id="profile-save" value="default">Speichern</button></div></form></dialog>
+<dialog id="crop-dialog" class="modal crop-modal"><form method="dialog"><div class="modal-head"><h2>Bild zuschneiden</h2><button class="icon-btn" value="cancel">×</button></div><div class="crop-stage" id="crop-stage"><img id="crop-image" alt="Bildvorschau"></div><label>Zoom<input id="crop-zoom" type="range" min="1" max="3" step=".01" value="1"></label><p class="hint">Ziehe das Bild, um den Ausschnitt anzupassen.</p><div class="modal-actions"><button class="outline" value="cancel">Abbrechen</button><button class="primary" id="crop-save" value="default">Übernehmen</button></div></form></dialog>
+<dialog id="simple-dialog" class="modal"><form method="dialog" id="simple-form"><div class="modal-head"><h2 id="simple-title">FriendChat</h2><button class="icon-btn" value="cancel">×</button></div><div id="simple-body"></div><div class="modal-actions"><button class="outline" value="cancel">Abbrechen</button><button class="primary" id="simple-confirm" value="default">Erstellen</button></div></form></dialog>
+<input id="image-file" type="file" accept="image/*" hidden><div id="toast" class="toast"></div><script src="script.js"></script>
+</body></html>

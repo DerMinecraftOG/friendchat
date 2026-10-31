@@ -1,415 +1,103 @@
-/*
-  FriendChat vanilla JS + Supabase.
-  1) Replace SUPABASE_URL and SUPABASE_PUBLISHABLE_KEY.
-  2) Run supabase/schema.sql in the Supabase SQL Editor.
-  Never put a service_role / secret key in this file.
-*/
-const SUPABASE_URL = 'https://uiqbzbcftzzabuztezul.supabase.co';
-const SUPABASE_PUBLISHABLE_KEY = 'sb_publishable_QOxPaKV0JYbOtNV_bbRukg_0OcCewUM';
-
-const $ = (id) => document.getElementById(id);
-const EMOJIS = ['😀','😂','🥹','😍','😎','😭','🔥','❤️','👍','🎉','✨','👀','🤔','🙏','💯','🥳'];
-const clientConfigured = !SUPABASE_URL.includes('DEIN-PROJEKT') &&
-  !SUPABASE_PUBLISHABLE_KEY.includes('DEIN_PUBLISHABLE_KEY') &&
-  window.supabase?.createClient;
-const db = clientConfigured ? window.supabase.createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY) : null;
-
-let session = null;
-let me = null;
-let friends = [];
-let requests = [];
-let activeFriend = null;
-let messages = [];
-let realtimeChannel = null;
-let authMode = 'login';
-let emojiOpen = false;
-let theme = localStorage.getItem('friendchat-theme') || 'light';
-let noticeTimer = null;
-
-const esc = (value = '') => String(value).replace(/[&<>"']/g, ch => ({
-  '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;'
-}[ch]));
-const initials = (name = '?') => [...name][0]?.toUpperCase() || '?';
-const isValidUsername = name => /^[a-zA-Z0-9_]{3,20}$/.test(name);
-const fmtTime = value => new Date(value).toLocaleTimeString('de-DE', {hour:'2-digit', minute:'2-digit'});
-
-function avatarHTML(profile, size = '') {
-  const classes = `avatar ${size}`.trim();
-  const content = profile?.avatar_url
-    ? `<img src="${esc(profile.avatar_url)}" alt="" referrerpolicy="no-referrer">`
-    : esc(initials(profile?.username));
-  return `<span class="${classes}">${content}</span>`;
-}
-function setAlert(el, text, kind = 'error') {
-  el.textContent = text;
-  el.className = `alert ${kind}`;
-}
-function clearAlert(el) { el.textContent = ''; el.className = 'alert hidden'; }
-function showGlobal(text, kind = 'success') {
-  const el = $('global-message');
-  setAlert(el, text, kind);
-  clearTimeout(noticeTimer);
-  noticeTimer = setTimeout(() => el.classList.add('hidden'), 6000);
-}
-function setTheme(next) {
-  theme = next;
-  document.documentElement.dataset.theme = theme;
-  localStorage.setItem('friendchat-theme', theme);
-  $('theme-icon').textContent = theme === 'light' ? '☾' : '☀';
-  $('theme-label').textContent = theme === 'light' ? 'Dark Mode' : 'Light Mode';
-  $('top-theme-toggle').textContent = theme === 'light' ? '☾' : '☀';
-}
-function switchAuthMode(mode) {
-  authMode = mode;
-  const registering = mode === 'register';
-  $('username-label').classList.toggle('hidden', !registering);
-  $('auth-username').required = registering;
-  $('auth-username').value = '';
-  $('auth-password').autocomplete = registering ? 'new-password' : 'current-password';
-  $('auth-eyebrow').textContent = registering ? 'SCHÖN, DASS DU DA BIST' : 'WILLKOMMEN ZURÜCK';
-  $('auth-title').textContent = registering ? 'Konto erstellen' : 'Melde dich an';
-  $('auth-description').textContent = registering ? 'Erstelle dein Konto und finde deine Leute.' : 'Melde dich an und schreib deinen Freunden.';
-  $('auth-submit').innerHTML = registering ? 'Registrieren <span>→</span>' : 'Anmelden <span>→</span>';
-  $('auth-switch-copy').textContent = registering ? 'Du hast schon ein Konto?' : 'Noch kein Konto?';
-  $('auth-switch').textContent = registering ? 'Anmelden' : 'Registrieren';
-  $('auth-message').classList.add('hidden');
-}
-$('auth-switch').addEventListener('click', () => switchAuthMode(authMode === 'login' ? 'register' : 'login'));
-
-$('auth-form').addEventListener('submit', async event => {
-  event.preventDefault();
-  if (!db) return setAlert($('auth-message'), 'Bitte trage zuerst deine Supabase-URL und deinen Publishable Key oben in script.js ein.');
-  clearAlert($('auth-message'));
-  const email = $('auth-email').value.trim();
-  const password = $('auth-password').value;
-  const button = $('auth-submit');
+// FriendChat starter: set your Supabase project URL and anon key.
+const SUPABASE_URL="https://uiqbzbcftzzabuztezul.supabase.co",SUPABASE_ANON_KEY="sb_publishable_QOxPaKV0JYbOtNV_bbRukg_0OcCewUM";
+const db=window.supabase?.createClient(SUPABASE_URL,SUPABASE_ANON_KEY),$=id=>document.getElementById(id);
+const S={user:null,profile:null,mode:"dm",peer:null,server:null,channel:null,servers:[],friends:[],cropKind:null,cropFile:null,cropScale:1,cropX:0,cropY:0,drag:null};
+const statusNames={online:"Online",idle:"Abwesend",dnd:"Bitte nicht stören",offline:"Offline"};
+function toast(t){const x=$("toast");x.textContent=t;x.classList.add("show");setTimeout(()=>x.classList.remove("show"),2300)}
+function esc(s=""){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]))}
+function avatar(url){return url?`<img src="${esc(url)}" alt="">`:"?"}
+function authView(){$("auth").classList.remove("hidden");$("app").classList.add("hidden")}
+async function enter(user){S.user=user;let {data,error}=await db.from("profiles").select("*").eq("id",user.id).maybeSingle();if(error){toast(error.message);return}if(!data){let r=await db.from("profiles").insert({id:user.id,username:user.user_metadata?.display_name||user.email.split("@")[0]}).select().single();data=r.data}S.profile=data;$("auth").classList.add("hidden");$("app").classList.remove("hidden");renderMe();await loadFriends();await loadServers();$("presence").value=data.status||"online"}
+function renderMe(){const p=S.profile;$("user-name").textContent=p.username;$("user-status-label").textContent=statusNames[p.status]||"Online";$("user-avatar").innerHTML=avatar(p.avatar_url);$("my-avatar").innerHTML=avatar(p.avatar_url)}
+async function init(){if(!db||SUPABASE_URL.startsWith("YOUR_")){$("auth-hint").textContent="Trage zuerst Supabase-URL und Anon-Key in script.js ein und führe schema.sql aus.";authView();return}const {data:{session}}=await db.auth.getSession();if(session)await enter(session.user);else authView();db.auth.onAuthStateChange(async(_e,s)=>{if(s&&!S.user)await enter(s.user);if(!s){S.user=null;authView()}})}
+$("auth-form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const button = $("auth-submit");
+  const email = $("email").value.trim();
+  const password = $("password").value;
+  if (!db) {
+    toast("Supabase wurde nicht geladen. Prüfe deine Internetverbindung und den Supabase-CDN-Link.");
+    return;
+  }
+  if (!SUPABASE_URL || SUPABASE_URL.includes("YOUR_") ||
+      !SUPABASE_ANON_KEY || SUPABASE_ANON_KEY.includes("YOUR_")) {
+    toast("Bitte zuerst SUPABASE_URL und SUPABASE_ANON_KEY in script.js eintragen.");
+    return;
+  }
   button.disabled = true;
+  const oldText = button.textContent;
+  button.textContent = "Bitte warten …";
   try {
-    if (authMode === 'register') {
-      const username = $('auth-username').value.trim().replace(/^@/, '');
-      if (!isValidUsername(username)) throw new Error('Benutzername: 3–20 Zeichen, nur Buchstaben, Zahlen und Unterstriche.');
-      const { data, error } = await db.auth.signUp({
-        email, password, options: { data: { username }, emailRedirectTo: location.origin }
+    let result;
+    if (button.dataset.signup === "1") {
+      result = await db.auth.signUp({
+        email,
+        password,
+        options: { data: { display_name: $("display-name").value.trim() || email.split("@")[0] } }
       });
-      if (error) throw error;
-      if (!data.session) setAlert($('auth-message'), 'Registrierung erstellt. Bitte bestätige ggf. deine E-Mail-Adresse und melde dich dann an.', 'success');
     } else {
-      const { error } = await db.auth.signInWithPassword({ email, password });
-      if (error) throw error;
+      result = await db.auth.signInWithPassword({ email, password });
     }
-  } catch (error) { setAlert($('auth-message'), error.message || 'Anmeldung fehlgeschlagen.'); }
-  finally { button.disabled = false; }
-});
-
-async function loadMyProfile() {
-  const { data, error } = await db.from('profiles').select('*').eq('id', session.user.id).maybeSingle();
-  if (error) throw error;
-  if (!data) throw new Error('Dein Profil fehlt. Prüfe, ob du supabase/schema.sql ausgeführt hast.');
-  me = data;
-  renderMyProfile();
-}
-function renderMyProfile() {
-  if (!me) return;
-  $('sidebar-avatar').innerHTML = me.avatar_url ? `<img src="${esc(me.avatar_url)}" alt="">` : esc(initials(me.username));
-  $('sidebar-username').textContent = me.username;
-  $('profile-username').value = me.username || '';
-  $('profile-bio').value = me.bio || '';
-  $('bio-count').textContent = `${(me.bio || '').length}/180`;
-  $('profile-avatar-preview').innerHTML = me.avatar_url ? `<img src="${esc(me.avatar_url)}" alt="">` : esc(initials(me.username));
-  $('banner-preview').style.backgroundImage = me.banner_url
-    ? `linear-gradient(90deg,#3449a455,#8158cd55),url("${me.banner_url.replace(/["\\\n\r]/g, '')}")`
-    : 'linear-gradient(115deg,#5362d8,#a18ae8)';
-}
-async function loadFriendsAndRequests() {
-  const uid = session.user.id;
-  const [{ data: relations, error: friendError }, { data: pending, error: requestError }] = await Promise.all([
-    db.from('friendships').select('*').eq('status','accepted').or(`requester_id.eq.${uid},addressee_id.eq.${uid}`),
-    db.from('friendships').select('*').eq('status','pending').eq('addressee_id',uid)
-  ]);
-  if (friendError) throw friendError;
-  if (requestError) throw requestError;
-  const friendIds = (relations || []).map(r => r.requester_id === uid ? r.addressee_id : r.requester_id);
-  if (friendIds.length) {
-    const { data, error } = await db.from('profiles').select('*').in('id',friendIds).order('username');
-    if (error) throw error;
-    friends = data || [];
-  } else friends = [];
-  if (pending?.length) {
-    const ids = pending.map(r => r.requester_id);
-    const { data, error } = await db.from('profiles').select('*').in('id',ids);
-    if (error) throw error;
-    requests = pending.map(r => ({...r, profile:(data || []).find(p => p.id === r.requester_id)})).filter(r => r.profile);
-  } else requests = [];
-  renderFriends();
-  renderRequests();
-}
-function renderFriends() {
-  const query = $('friend-search').value.toLowerCase().trim();
-  const shown = friends.filter(f => (f.username || '').toLowerCase().includes(query));
-  $('friend-list').innerHTML = shown.length ? shown.map(f => `
-    <button class="friend-row ${activeFriend?.id === f.id ? 'selected' : ''}" type="button" data-friend-id="${esc(f.id)}">
-      ${avatarHTML(f)}
-      <span class="friend-info"><b>${esc(f.username)}</b><small>${esc(f.bio || 'Dein Freund')}</small></span>
-      <span class="online-dot"></span>
-    </button>`).join('') : `<p class="empty-small">${friends.length ? 'Keine Treffer.' : 'Noch keine Freunde. Füge jemanden hinzu!'}</p>`;
-  $('friend-list').querySelectorAll('[data-friend-id]').forEach(button => button.addEventListener('click', () => {
-    const friend = friends.find(f => f.id === button.dataset.friendId);
-    if (friend) openChat(friend);
-  }));
-}
-function renderRequests() {
-  $('requests-card').classList.toggle('hidden', !requests.length);
-  $('request-count').textContent = requests.length;
-  $('request-list').innerHTML = requests.map(r => `
-    <div class="request-row">
-      ${avatarHTML(r.profile)}
-      <span class="request-name"><b>@${esc(r.profile.username)}</b><small>möchte mit dir befreundet sein</small></span>
-      <button class="accept-button" type="button" data-accept="${esc(r.id)}" title="Annehmen">✓</button>
-      <button class="decline-button" type="button" data-reject="${esc(r.id)}" title="Ablehnen">×</button>
-    </div>`).join('');
-  $('request-list').querySelectorAll('[data-accept]').forEach(b => b.addEventListener('click', () => answerRequest(b.dataset.accept, true)));
-  $('request-list').querySelectorAll('[data-reject]').forEach(b => b.addEventListener('click', () => answerRequest(b.dataset.reject, false)));
-}
-async function answerRequest(id, accept) {
-  try {
-    const { error } = await db.rpc(accept ? 'accept_friend_request' : 'reject_friend_request', {request_id:id});
-    if (error) throw error;
-    await loadFriendsAndRequests();
-    showGlobal(accept ? 'Freundschaft angenommen.' : 'Anfrage abgelehnt.');
-  } catch (error) { showGlobal(error.message); }
-}
-$('friend-form').addEventListener('submit', async event => {
-  event.preventDefault();
-  const username = $('friend-username').value.trim().replace(/^@/,'');
-  if (!username) return;
-  try {
-    const { data: target, error } = await db.from('profiles').select('id,username').ilike('username', username).maybeSingle();
-    if (error) throw error;
-    if (!target) throw new Error('Dieser Benutzername wurde nicht gefunden.');
-    if (target.id === session.user.id) throw new Error('Du kannst dich nicht selbst hinzufügen.');
-    if (friends.some(f => f.id === target.id)) throw new Error('Ihr seid bereits befreundet.');
-    const { error: insertError } = await db.from('friendships').insert({requester_id:session.user.id,addressee_id:target.id,status:'pending'});
-    if (insertError) throw new Error(insertError.code === '23505' ? 'Für diese Richtung existiert bereits eine Anfrage.' : insertError.message);
-    $('friend-username').value = '';
-    showGlobal(`Freundschaftsanfrage an @${target.username} gesendet.`);
-  } catch (error) { showGlobal(error.message); }
-});
-$('focus-friend').addEventListener('click', () => $('friend-username').focus());
-$('friend-search').addEventListener('input', renderFriends);
-
-async function openChat(friend) {
-  activeFriend = friend;
-  $('welcome-panel').classList.add('hidden');
-  $('chat-panel').classList.remove('hidden');
-  $('page-title').textContent = `Chat mit ${friend.username}`;
-  $('chat-username').textContent = friend.username;
-  $('chat-bio').textContent = friend.bio || 'Dein Freund auf FriendChat';
-  $('chat-avatar').innerHTML = friend.avatar_url ? `<img src="${esc(friend.avatar_url)}" alt="">` : esc(initials(friend.username));
-  $('message-input').placeholder = `Nachricht an ${friend.username} …`;
-  renderFriends();
-  await loadMessages();
-  subscribeToMessages();
-}
-async function loadMessages() {
-  if (!activeFriend) return;
-  $('message-area').innerHTML = '<p class="loading-note">Nachrichten werden geladen …</p>';
-  const uid = session.user.id;
-  const friendId = activeFriend.id;
-  const { data, error } = await db.from('messages').select('*')
-    .or(`and(sender_id.eq.${uid},recipient_id.eq.${friendId}),and(sender_id.eq.${friendId},recipient_id.eq.${uid})`)
-    .order('created_at',{ascending:true}).limit(300);
-  if (error) { showGlobal(error.message); return; }
-  messages = data || [];
-  renderMessages();
-}
-function subscribeToMessages() {
-  if (realtimeChannel) db.removeChannel(realtimeChannel);
-  if (!activeFriend) return;
-  const pair = [session.user.id,activeFriend.id].sort().join('-');
-  realtimeChannel = db.channel(`chat-${pair}`)
-    .on('postgres_changes',{event:'*',schema:'public',table:'messages'}, payload => {
-      const row = payload.new || payload.old;
-      if (row && [row.sender_id,row.recipient_id].includes(session.user.id) &&
-          [row.sender_id,row.recipient_id].includes(activeFriend?.id)) loadMessages();
-    }).subscribe();
-}
-function renderMessages() {
-  const area = $('message-area');
-  const start = `<div class="chat-start"><div class="chat-start-avatar">${avatarHTML(activeFriend,'large')}</div><h2>Du und ${esc(activeFriend.username)}</h2><p>Das ist der Anfang eurer Unterhaltung. 👋</p></div>`;
-  const rows = messages.map(m => {
-    const mine = m.sender_id === session.user.id;
-    const author = mine ? me : activeFriend;
-    const tools = mine ? `<div class="message-tools"><button type="button" data-edit="${esc(m.id)}" title="Bearbeiten">✎</button><button type="button" data-delete="${esc(m.id)}" title="Löschen">⌫</button></div>` : '';
-    return `<div class="message-line ${mine?'mine':'theirs'}" data-message-row="${esc(m.id)}">
-      ${mine ? '' : avatarHTML(author,'small')}
-      <div class="message-content">
-        <div class="bubble ${mine?'my-bubble':'their-bubble'}"><span>${esc(m.content)}</span>${tools}</div>
-        <div class="message-meta">${fmtTime(m.created_at)}${m.edited_at?' · bearbeitet':''}</div>
-      </div>
-    </div>`;
-  }).join('');
-  area.innerHTML = start + rows;
-  area.querySelectorAll('[data-edit]').forEach(b => b.addEventListener('click', () => startEditing(b.dataset.edit)));
-  area.querySelectorAll('[data-delete]').forEach(b => b.addEventListener('click', () => deleteMessage(b.dataset.delete)));
-  area.scrollTop = area.scrollHeight;
-}
-function startEditing(id) {
-  const msg = messages.find(m => m.id === id);
-  if (!msg || msg.sender_id !== session.user.id) return;
-  const row = document.querySelector(`[data-message-row="${CSS.escape(id)}"] .bubble`);
-  if (!row) return;
-  row.innerHTML = `<form class="edit-message" data-edit-form="${esc(id)}"><input aria-label="Nachricht bearbeiten" maxlength="4000" required value="${esc(msg.content)}"><button class="icon-button" type="submit" title="Speichern">✓</button><button class="icon-button" type="button" data-cancel-edit="${esc(id)}" title="Abbrechen">×</button></form>`;
-  const form = row.querySelector('form');
-  const input = form.querySelector('input');
-  input.focus(); input.setSelectionRange(input.value.length,input.value.length);
-  form.addEventListener('submit', async event => {
-    event.preventDefault();
-    const content = input.value.trim();
-    if (!content) return showGlobal('Eine Nachricht darf nicht leer sein.','error');
-    try {
-      const { error } = await db.from('messages').update({content,edited_at:new Date().toISOString()}).eq('id',id).eq('sender_id',session.user.id);
-      if (error) throw error;
-      await loadMessages();
-    } catch (error) { showGlobal(error.message,'error'); }
-  });
-  row.querySelector('[data-cancel-edit]').addEventListener('click', renderMessages);
-}
-async function deleteMessage(id) {
-  if (!confirm('Diese Nachricht wirklich für beide Seiten löschen?')) return;
-  try {
-    const { error } = await db.from('messages').delete().eq('id',id).eq('sender_id',session.user.id);
-    if (error) throw error;
-    await loadMessages();
-  } catch (error) { showGlobal(error.message,'error'); }
-}
-$('composer').addEventListener('submit', async event => {
-  event.preventDefault();
-  if (!activeFriend) return;
-  const content = $('message-input').value.trim();
-  if (!content) return;
-  $('message-input').value = '';
-  $('emoji-tray').classList.add('hidden'); emojiOpen = false;
-  try {
-    const { error } = await db.from('messages').insert({sender_id:session.user.id,recipient_id:activeFriend.id,content});
-    if (error) throw error;
-    await loadMessages();
-  } catch (error) { $('message-input').value = content; showGlobal(error.message,'error'); }
-});
-$('emoji-toggle').addEventListener('click', () => {
-  emojiOpen = !emojiOpen;
-  $('emoji-tray').classList.toggle('hidden',!emojiOpen);
-  $('emoji-toggle').classList.toggle('pressed',emojiOpen);
-});
-$('emoji-tray').innerHTML = EMOJIS.map(emoji => `<button type="button">${emoji}</button>`).join('');
-$('emoji-tray').querySelectorAll('button').forEach(b => b.addEventListener('click', () => {
-  const input = $('message-input');
-  const start = input.selectionStart ?? input.value.length;
-  const end = input.selectionEnd ?? input.value.length;
-  input.value = input.value.slice(0,start) + b.textContent + input.value.slice(end);
-  input.focus();
-  input.setSelectionRange(start+b.textContent.length,start+b.textContent.length);
-}));
-$('remove-friend').addEventListener('click', async () => {
-  if (!activeFriend || !confirm(`Freundschaft mit @${activeFriend.username} wirklich beenden?`)) return;
-  const uid = session.user.id, fid = activeFriend.id;
-  try {
-    const { error } = await db.from('friendships').delete().eq('status','accepted')
-      .or(`and(requester_id.eq.${uid},addressee_id.eq.${fid}),and(requester_id.eq.${fid},addressee_id.eq.${uid})`);
-    if (error) throw error;
-    activeFriend = null;
-    $('chat-panel').classList.add('hidden'); $('welcome-panel').classList.remove('hidden');
-    $('page-title').textContent = 'Dein Nachrichtenraum';
-    await loadFriendsAndRequests();
-  } catch (error) { showGlobal(error.message,'error'); }
-});
-
-function openProfile() {
-  if (!me) return;
-  renderMyProfile();
-  $('profile-modal').classList.remove('hidden');
-}
-function closeProfile() { $('profile-modal').classList.add('hidden'); }
-$('open-profile').addEventListener('click',openProfile);
-$('close-profile').addEventListener('click',closeProfile);
-$('cancel-profile').addEventListener('click',closeProfile);
-$('profile-modal').addEventListener('mousedown',e => { if(e.target === $('profile-modal')) closeProfile(); });
-document.addEventListener('keydown',e => { if(e.key === 'Escape') closeProfile(); });
-$('profile-bio').addEventListener('input',() => $('bio-count').textContent = `${$('profile-bio').value.length}/180`);
-$('profile-form').addEventListener('submit',async event => {
-  event.preventDefault();
-  const username = $('profile-username').value.trim().replace(/^@/,'');
-  const bio = $('profile-bio').value.trim();
-  if (!isValidUsername(username)) return showGlobal('Benutzername: 3–20 Zeichen, Buchstaben, Zahlen und Unterstriche.','error');
-  try {
-    const { error } = await db.from('profiles').update({username,bio,updated_at:new Date().toISOString()}).eq('id',session.user.id);
-    if (error) throw error;
-    await loadMyProfile();
-    await loadFriendsAndRequests();
-    if (activeFriend) {
-      const refreshed = friends.find(f => f.id === activeFriend.id);
-      if (refreshed) activeFriend = refreshed;
+    if (result.error) {
+      toast("Supabase: " + result.error.message);
+    } else if (result.data.session) {
+      await enter(result.data.user);
+    } else {
+      toast("Konto erstellt. Bitte bestätige zuerst deine E-Mail-Adresse.");
     }
-    closeProfile(); showGlobal('Profil gespeichert.');
-  } catch (error) { showGlobal(error.code === '23505' ? 'Dieser Benutzername ist bereits vergeben.' : error.message,'error'); }
+  } catch (error) {
+    console.error("FriendChat Login-Fehler:", error);
+    toast("Login fehlgeschlagen: " + (error?.message || "Unbekannter Fehler"));
+  } finally {
+    button.disabled = false;
+    button.textContent = oldText;
+  }
 });
-$('avatar-upload-button').addEventListener('click',() => $('avatar-file').click());
-$('banner-upload-button').addEventListener('click',() => $('banner-file').click());
-$('avatar-file').addEventListener('change',e => uploadProfileImage(e.target.files?.[0],'avatar_url','avatar-file'));
-$('banner-file').addEventListener('change',e => uploadProfileImage(e.target.files?.[0],'banner_url','banner-file'));
-async function uploadProfileImage(file,field,inputId) {
-  if (!file) return;
-  $(inputId).value = '';
-  if (!['image/png','image/jpeg','image/webp','image/gif'].includes(file.type)) return showGlobal('Bitte wähle PNG, JPEG, WebP oder GIF.','error');
-  if (file.size > 4*1024*1024) return showGlobal('Das Bild darf höchstens 4 MB groß sein.','error');
-  try {
-    const ext = file.type.split('/')[1].replace('jpeg','jpg');
-    const path = `${session.user.id}/${field}-${crypto.randomUUID()}.${ext}`;
-    const {error: uploadError} = await db.storage.from('profile-media').upload(path,file,{contentType:file.type,upsert:false});
-    if (uploadError) throw uploadError;
-    const {data} = db.storage.from('profile-media').getPublicUrl(path);
-    const {error} = await db.from('profiles').update({[field]:data.publicUrl,updated_at:new Date().toISOString()}).eq('id',session.user.id);
-    if (error) throw error;
-    await loadMyProfile();
-    await loadFriendsAndRequests();
-    showGlobal('Bild aktualisiert.');
-  } catch (error) { showGlobal(error.message,'error'); }
-}
-$('theme-toggle').addEventListener('click',() => setTheme(theme === 'light' ? 'dark' : 'light'));
-$('top-theme-toggle').addEventListener('click',() => setTheme(theme === 'light' ? 'dark' : 'light'));
-$('logout-button').addEventListener('click',async () => { await db?.auth.signOut(); });
+$("auth-toggle").onclick=()=>{let on=$("auth-submit").dataset.signup!=="1";$("auth-submit").dataset.signup=on?"1":"0";$("auth-submit").textContent=on?"Konto erstellen":"Anmelden";$("name-wrap").classList.toggle("hidden",!on);$("auth-toggle").textContent=on?"Zurück zur Anmeldung":"Noch kein Konto? Registrieren"};
+$("logout").onclick=()=>db.auth.signOut();$("theme-toggle").onclick=()=>{document.body.classList.toggle("light");localStorage.setItem("fc-theme",document.body.classList.contains("light")?"light":"dark")};if(localStorage.getItem("fc-theme")==="light")document.body.classList.add("light");
+$("presence").onchange=async()=>{let status=$("presence").value,{error}=await db.from("profiles").update({status}).eq("id",S.user.id);if(error)toast(error.message);else{S.profile.status=status;renderMe()}};
+async function loadFriends(){let {data:rels}=await db.from("friendships").select("*").or(`user_id.eq.${S.user.id},friend_id.eq.${S.user.id}`).eq("status","accepted");let ids=(rels||[]).map(x=>x.user_id===S.user.id?x.friend_id:x.user_id);let {data}=ids.length?await db.from("profiles").select("*").in("id",ids):{data:[]};S.friends=data||[];$("dm-list").innerHTML=S.friends.map(p=>`<div class="nav-item" data-peer="${p.id}"><div class="avatar-small">${avatar(p.avatar_url)}</div><span>${esc(p.username)}</span><small>${statusNames[p.status]||"Offline"}</small></div>`).join("")||'<p class="hint">Noch keine Freunde. Suche oben nach Nutzern.</p>';$("dm-list").querySelectorAll("[data-peer]").forEach(el=>el.onclick=()=>openDM(S.friends.find(p=>p.id===el.dataset.peer)));
+let {data:req}=await db.from("friendships").select("id,user_id").eq("friend_id",S.user.id).eq("status","pending");let ids2=(req||[]).map(x=>x.user_id);let names=ids2.length?await db.from("profiles").select("id,username").in("id",ids2):{data:[]};$("requests-list").innerHTML=(req||[]).map(x=>`<div class="nav-item"><span>${esc(names.data?.find(p=>p.id===x.user_id)?.username||"Anfrage")}</span><button data-accept="${x.id}">✓</button><button data-reject="${x.id}">×</button></div>`).join("")||'<p class="hint">Keine offenen Anfragen.</p>';$("requests-list").querySelectorAll("[data-accept]").forEach(b=>b.onclick=()=>answerRequest(b.dataset.accept,"accepted"));$("requests-list").querySelectorAll("[data-reject]").forEach(b=>b.onclick=()=>answerRequest(b.dataset.reject,"rejected"))}
+async function answerRequest(id,status){let {error}=await db.from("friendships").update({status}).eq("id",id);if(error)toast(error.message);else loadFriends()}
+$("search-btn").onclick=searchUsers;$("friend-search").onkeydown=e=>{if(e.key==="Enter")searchUsers()};
+async function searchUsers(){let q=$("friend-search").value.trim();if(q.length<2)return;let {data,error}=await db.from("profiles").select("id,username").ilike("username",`%${q}%`).neq("id",S.user.id).limit(10);if(error){toast(error.message);return}$("search-results").innerHTML=(data||[]).map(p=>`<div class="nav-item"><span>${esc(p.username)}</span><button data-add="${p.id}">＋</button></div>`).join("")||'<p class="hint">Keine Nutzer gefunden.</p>';$("search-results").querySelectorAll("[data-add]").forEach(b=>b.onclick=async()=>{let {error}=await db.from("friendships").insert({user_id:S.user.id,friend_id:b.dataset.add});toast(error?error.message:"Anfrage gesendet")})}
+async function openDM(peer){if(!peer)return;S.mode="dm";S.peer=peer;S.channel=null;S.server=null;showChat(peer.username,`Direktnachricht · ${statusNames[peer.status]||"Offline"}`);loadMessages()}
+function showChat(title,sub){$("welcome").classList.add("hidden");$("messages").classList.remove("hidden");$("message-form").classList.remove("hidden");$("chat-title").textContent=title;$("chat-subtitle").textContent=sub;$("chat-context").textContent=S.mode==="dm"?"DIREKTNACHRICHT":"SERVERKANAL";$("app").classList.add("chat-open")}
+async function loadMessages(){let q=db.from("messages").select("*,profiles(username,avatar_url)").order("created_at").limit(100);q=S.mode==="dm"?q.eq("kind","dm").or(`and(sender_id.eq.${S.user.id},recipient_id.eq.${S.peer.id}),and(sender_id.eq.${S.peer.id},recipient_id.eq.${S.user.id})`):q.eq("channel_id",S.channel.id);let {data,error}=await q;if(error){toast(error.message);return}renderMessages(data||[])}
+function renderMessages(rows){$("messages").innerHTML=rows.map(m=>`<article class="message"><div class="avatar-small">${avatar(m.profiles?.avatar_url)}</div><div class="message-body"><div class="message-top"><b>${esc(m.profiles?.username||"Nutzer")}</b><time>${new Date(m.created_at).toLocaleString("de-DE")}</time>${m.sender_id===S.user.id?`<span class="message-actions"><button data-edit="${m.id}" data-text="${esc(m.content)}">Bearbeiten</button><button data-del="${m.id}">Löschen</button></span>`:""}</div><div class="message-text">${esc(m.content)}</div></div></article>`).join("");$("messages").scrollTop=$("messages").scrollHeight;$("messages").querySelectorAll("[data-del]").forEach(b=>b.onclick=()=>deleteMessage(b.dataset.del));$("messages").querySelectorAll("[data-edit]").forEach(b=>b.onclick=()=>editMessage(b.dataset.edit,b.dataset.text))}
+$("message-form").onsubmit=async e=>{e.preventDefault();let content=$("message-input").value.trim();if(!content)return;let row={sender_id:S.user.id,content,kind:S.mode};if(S.mode==="dm")row.recipient_id=S.peer.id;else row.channel_id=S.channel.id;let {error}=await db.from("messages").insert(row);if(error)toast(error.message);else{$("message-input").value="";loadMessages()}};
+$("emoji-btn").onclick=()=>{$("message-input").value+=" 😊";$("message-input").focus()};
+async function deleteMessage(id){if(!confirm("Nachricht wirklich löschen?"))return;let {error}=await db.from("messages").delete().eq("id",id);if(error)toast(error.message);else loadMessages()}
+async function editMessage(id,old){let next=prompt("Nachricht bearbeiten:",old);if(next===null||!next.trim())return;let {error}=await db.from("messages").update({content:next.trim(),edited_at:new Date().toISOString()}).eq("id",id);if(error)toast(error.message);else loadMessages()}
+async function loadServers(){let {data}=await db.from("server_members").select("server_id,servers(id,name,icon_url,invite_code)").eq("user_id",S.user.id);S.servers=(data||[]).map(x=>x.servers).filter(Boolean);$("server-list").innerHTML=S.servers.map(s=>`<button class="server-icon" data-server="${s.id}" title="${esc(s.name)}">${s.icon_url?avatar(s.icon_url):esc(s.name.slice(0,2).toUpperCase())}</button>`).join("");$("server-list").querySelectorAll("[data-server]").forEach(b=>b.onclick=()=>openServer(S.servers.find(s=>s.id===b.dataset.server)))}
+async function openServer(server){S.server=server;S.mode="server";$("friends-panel").classList.add("hidden");$("server-panel").classList.remove("hidden");$("side-title").textContent=server.name;$("server-name").textContent=server.name;let {data}=await db.from("channels").select("*").eq("server_id",server.id).order("created_at");S.channels=data||[];$("channel-list").innerHTML=S.channels.map(c=>`<div class="nav-item" data-channel="${c.id}"># <span>${esc(c.name)}</span></div>`).join("")||'<p class="hint">Noch keine Kanäle.</p>';$("channel-list").querySelectorAll("[data-channel]").forEach(el=>el.onclick=()=>openChannel(S.channels.find(c=>c.id===el.dataset.channel)))}
+async function openChannel(ch){S.channel=ch;S.mode="server";showChat("# "+ch.name,S.server.name);await loadMessages()}
+$("home-btn").onclick=()=>{$("friends-panel").classList.remove("hidden");$("server-panel").classList.add("hidden");$("side-title").textContent="Freunde";$("app").classList.remove("chat-open");$("welcome").classList.remove("hidden");$("messages").classList.add("hidden");$("message-form").classList.add("hidden");S.mode="dm"};
+function simpleDialog(title,fields,confirmText,callback){$("simple-title").textContent=title;$("simple-confirm").textContent=confirmText;$("simple-body").innerHTML=fields.map(f=>`<label>${f.label}<input id="field-${f.id}" placeholder="${f.placeholder||""}" maxlength="${f.max||100}" required></label>`).join("");$("simple-dialog").showModal();$("simple-form").onsubmit=async e=>{e.preventDefault();let vals=Object.fromEntries(fields.map(f=>[f.id,$("field-"+f.id).value.trim()]));await callback(vals);$("simple-dialog").close()}}
+$("create-server").onclick=()=>simpleDialog("Server erstellen",[{id:"name",label:"Servername",max:40}],"Erstellen",createServer);
+async function createServer(v){let code=crypto.randomUUID().slice(0,8).toUpperCase();let {data,error}=await db.from("servers").insert({name:v.name,owner_id:S.user.id,invite_code:code}).select().single();if(error){toast(error.message);return}let r=await db.from("server_members").insert({server_id:data.id,user_id:S.user.id});if(r.error)toast(r.error.message);else{toast("Server erstellt");await loadServers();openServer(data)}}
+$("join-server").onclick=()=>simpleDialog("Server beitreten",[{id:"code",label:"Einladungscode",max:20}],"Beitreten",async v=>{let {error}=await db.rpc("join_server_by_code",{invite_code_input:v.code});if(error)toast(error.message);else{toast("Server beigetreten");await loadServers()}});
+$("create-channel").onclick=()=>{if(S.server)simpleDialog("Textkanal erstellen",[{id:"name",label:"Kanalname",max:40}],"Erstellen",async v=>{let {error}=await db.from("channels").insert({server_id:S.server.id,name:v.name,created_by:S.user.id});if(error)toast(error.message);else openServer(S.server)})};
+$("invite-copy").onclick=()=>{if(S.server?.invite_code)navigator.clipboard.writeText(S.server.invite_code).then(()=>toast("Einladungscode kopiert: "+S.server.invite_code))};
+$("profile-open").onclick=()=>{let p=S.profile;$("profile-name").value=p.username||"";$("profile-bio").value=p.bio||"";$("avatar-preview").innerHTML=avatar(p.avatar_url);$("banner-preview").style.backgroundImage=p.banner_url?`url("${p.banner_url}")`:"";$("profile-dialog").showModal()};
+$("avatar-upload").onclick=()=>pickImage("avatar");$("banner-upload").onclick=()=>pickImage("banner");
+function pickImage(kind){S.cropKind=kind;$("image-file").click()}
+$("image-file").onchange=e=>{let file=e.target.files[0];if(!file)return;if(!file.type.startsWith("image/")||file.size>8*1024*1024){toast("Bitte ein Bild unter 8 MB wählen.");return}S.cropFile=file;let url=URL.createObjectURL(file);$("crop-image").src=url;S.cropImage=new Image();S.cropImage.src=url;S.cropScale=1;S.cropX=0;S.cropY=0;$("crop-zoom").value=1;S.cropImage.onload=updateCrop;$("crop-dialog").showModal();e.target.value=""};
+function updateCrop(){let stage=$("crop-stage"),im=$("crop-image"),w=stage.clientWidth,h=stage.clientHeight,base=Math.max(w/S.cropImage.width,h/S.cropImage.height),scale=base*S.cropScale;im.style.width=S.cropImage.width*scale+"px";im.style.height=S.cropImage.height*scale+"px";im.style.left=((w-S.cropImage.width*scale)/2+S.cropX)+"px";im.style.top=((h-S.cropImage.height*scale)/2+S.cropY)+"px"}
+$("crop-zoom").oninput=e=>{S.cropScale=+e.target.value;updateCrop()};
+$("crop-stage").onpointerdown=e=>{S.drag={x:e.clientX-S.cropX,y:e.clientY-S.cropY};$("crop-stage").setPointerCapture(e.pointerId)};
+$("crop-stage").onpointermove=e=>{if(S.drag){S.cropX=e.clientX-S.drag.x;S.cropY=e.clientY-S.drag.y;updateCrop()}};$("crop-stage").onpointerup=()=>S.drag=null;
+$("crop-save").onclick=async e=>{e.preventDefault();let kind=S.cropKind,stage=$("crop-stage"),im=$("crop-image"),canvas=document.createElement("canvas");canvas.width=kind==="avatar"?512:1200;canvas.height=kind==="avatar"?512:400;let ctx=canvas.getContext("2d"),r=stage.getBoundingClientRect(),ir=im.getBoundingClientRect(),sx=(r.left-ir.left)/ir.width*S.cropImage.width,sy=(r.top-ir.top)/ir.height*S.cropImage.height,sw=r.width/ir.width*S.cropImage.width,sh=r.height/ir.height*S.cropImage.height;ctx.drawImage(S.cropImage,sx,sy,sw,sh,0,0,canvas.width,canvas.height);let blob=await new Promise(res=>canvas.toBlob(res,"image/webp",.88)),path=`${S.user.id}/${kind}-${Date.now()}.webp`,{error}=await db.storage.from("profile-media").upload(path,blob,{contentType:"image/webp"});if(error){toast(error.message);return}let {data}=db.storage.from("profile-media").getPublicUrl(path);S[kind+"Pending"]=data.publicUrl;if(kind==="avatar")$("avatar-preview").innerHTML=avatar(data.publicUrl);else $("banner-preview").style.backgroundImage=`url("${data.publicUrl}")`;$("crop-dialog").close()};
+$("profile-save").onclick=async e=>{e.preventDefault();let updates={username:$("profile-name").value.trim(),bio:$("profile-bio").value.trim()};if(S.avatarPending)updates.avatar_url=S.avatarPending;if(S.bannerPending)updates.banner_url=S.bannerPending;let {data,error}=await db.from("profiles").update(updates).eq("id",S.user.id).select().single();if(error)toast(error.message);else{S.profile=data;S.avatarPending=S.bannerPending=null;renderMe();$("profile-dialog").close();toast("Profil gespeichert")}};
+init();
 
-async function showSignedInApp(nextSession) {
-  session = nextSession;
-  $('auth-view').classList.add('hidden');
-  $('app-view').classList.remove('hidden');
-  clearAlert($('global-message'));
-  try {
-    await loadMyProfile();
-    await loadFriendsAndRequests();
-  } catch (error) { showGlobal(error.message,'error'); }
-}
-function showSignedOutApp() {
-  session = null; me = null; friends = []; requests = []; activeFriend = null; messages = [];
-  if (realtimeChannel && db) db.removeChannel(realtimeChannel);
-  realtimeChannel = null;
-  $('auth-view').classList.remove('hidden');
-  $('app-view').classList.add('hidden');
-  $('profile-modal').classList.add('hidden');
-  $('chat-panel').classList.add('hidden');
-  $('welcome-panel').classList.remove('hidden');
-  $('page-title').textContent = 'Dein Nachrichtenraum';
-}
-
-setTheme(theme);
-if (!db) {
-  setAlert($('auth-message'),'Setup nötig: Öffne script.js und trage SUPABASE_URL und SUPABASE_PUBLISHABLE_KEY aus deinem Supabase-Projekt ein.');
-} else {
-  db.auth.getSession().then(({data,error}) => {
-    if (error) setAlert($('auth-message'),error.message);
-    if (data.session) showSignedInApp(data.session);
-  });
-  db.auth.onAuthStateChange((_event,nextSession) => {
-    if (nextSession) showSignedInApp(nextSession);
-    else showSignedOutApp();
-  });
-}
+window.addEventListener("error", (event) => {
+  console.error("FriendChat JavaScript-Fehler:", event.error || event.message);
+  const hint = document.getElementById("auth-hint");
+  if (hint) hint.textContent = "Ein JavaScript-Fehler ist aufgetreten: " + (event.message || "Unbekannter Fehler") + " (Details: Browser-Konsole mit F12 öffnen).";
+});
+window.addEventListener("unhandledrejection", (event) => {
+  console.error("FriendChat Promise-Fehler:", event.reason);
+  const hint = document.getElementById("auth-hint");
+  if (hint) hint.textContent = "Ein Fehler ist aufgetreten: " + (event.reason?.message || String(event.reason));
+});

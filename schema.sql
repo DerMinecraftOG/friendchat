@@ -1,264 +1,36 @@
--- FriendChat schema. Run the ENTIRE file in Supabase Dashboard > SQL Editor.
--- This is a starter schema; test the policies with two separate accounts before launch.
-
+-- FriendChat starter schema. Run in Supabase SQL Editor.
 create extension if not exists pgcrypto;
-
-create table if not exists public.profiles (
-  id uuid primary key references auth.users(id) on delete cascade,
-  username text not null unique check (char_length(username) between 3 and 20),
-  bio text not null default '' check (char_length(bio) <= 180),
-  avatar_url text,
-  banner_url text,
-  created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
-);
-
-create table if not exists public.friendships (
-  id uuid primary key default gen_random_uuid(),
-  requester_id uuid not null references public.profiles(id) on delete cascade,
-  addressee_id uuid not null references public.profiles(id) on delete cascade,
-  status text not null default 'pending' check (status in ('pending','accepted','rejected')),
-  created_at timestamptz not null default now(),
-  constraint no_self_friendship check (requester_id <> addressee_id),
-  constraint unique_friend_request_direction unique (requester_id, addressee_id)
-);
-
-create table if not exists public.messages (
-  id uuid primary key default gen_random_uuid(),
-  sender_id uuid not null references public.profiles(id) on delete cascade,
-  recipient_id uuid not null references public.profiles(id) on delete cascade,
-  content text not null check (char_length(content) between 1 and 4000),
-  created_at timestamptz not null default now(),
-  edited_at timestamptz,
-  constraint no_self_message check (sender_id <> recipient_id)
-);
-
-create index if not exists messages_conversation_time_idx
-  on public.messages (sender_id, recipient_id, created_at);
-create index if not exists friendships_addressee_status_idx
-  on public.friendships (addressee_id, status);
-
--- Create a profile whenever a new Auth user is created.
-create or replace function public.create_profile_for_new_user()
-returns trigger
-language plpgsql
-security definer
-set search_path = ''
-as $$
-declare
-  chosen_name text;
-begin
-  chosen_name := coalesce(
-    nullif(new.raw_user_meta_data ->> 'username', ''),
-    'user_' || substr(new.id::text, 1, 8)
-  );
-  chosen_name := regexp_replace(chosen_name, '[^a-zA-Z0-9_]', '', 'g');
-  if char_length(chosen_name) < 3 then
-    chosen_name := 'user_' || substr(new.id::text, 1, 8);
-  end if;
-
-  -- If the requested username is already taken, create a unique fallback.
-  if exists (select 1 from public.profiles p where lower(p.username) = lower(chosen_name)) then
-    chosen_name := 'user_' || substr(new.id::text, 1, 8);
-  end if;
-
-  insert into public.profiles (id, username)
-  values (new.id, chosen_name)
-  on conflict (id) do nothing;
-  return new;
-end;
-$$;
-
-drop trigger if exists on_auth_user_created_profile on auth.users;
-create trigger on_auth_user_created_profile
-  after insert on auth.users
-  for each row execute procedure public.create_profile_for_new_user();
-
--- RLS helper avoids recursive policy evaluation on friendships.
-create or replace function public.are_friends(user_a uuid, user_b uuid)
-returns boolean
-language sql
-stable
-security definer
-set search_path = ''
-as $$
-  select exists (
-    select 1 from public.friendships f
-    where f.status = 'accepted'
-      and (
-        (f.requester_id = user_a and f.addressee_id = user_b)
-        or (f.requester_id = user_b and f.addressee_id = user_a)
-      )
-  );
-$$;
-
-revoke all on function public.are_friends(uuid, uuid) from public;
-grant execute on function public.are_friends(uuid, uuid) to authenticated;
-
--- Only the recipient can accept/reject their incoming pending request.
-create or replace function public.accept_friend_request(request_id uuid)
-returns void
-language plpgsql
-security definer
-set search_path = ''
-as $$
-begin
-  update public.friendships
-  set status = 'accepted'
-  where id = request_id
-    and addressee_id = auth.uid()
-    and status = 'pending';
-  if not found then
-    raise exception 'Anfrage nicht gefunden oder nicht berechtigt.';
-  end if;
-end;
-$$;
-
-create or replace function public.reject_friend_request(request_id uuid)
-returns void
-language plpgsql
-security definer
-set search_path = ''
-as $$
-begin
-  update public.friendships
-  set status = 'rejected'
-  where id = request_id
-    and addressee_id = auth.uid()
-    and status = 'pending';
-  if not found then
-    raise exception 'Anfrage nicht gefunden oder nicht berechtigt.';
-  end if;
-end;
-$$;
-
-revoke all on function public.accept_friend_request(uuid) from public;
-revoke all on function public.reject_friend_request(uuid) from public;
-grant execute on function public.accept_friend_request(uuid) to authenticated;
-grant execute on function public.reject_friend_request(uuid) to authenticated;
-
--- All exposed tables have RLS. Grants are explicitly limited.
-alter table public.profiles enable row level security;
-alter table public.friendships enable row level security;
-alter table public.messages enable row level security;
-
-revoke all on public.profiles from anon, authenticated;
-revoke all on public.friendships from anon, authenticated;
-revoke all on public.messages from anon, authenticated;
-
-grant select on public.profiles to authenticated;
-grant insert (id, username) on public.profiles to authenticated;
-grant update (username, bio, avatar_url, banner_url, updated_at) on public.profiles to authenticated;
-
-grant select, insert, delete on public.friendships to authenticated;
-grant select, insert, update, delete on public.messages to authenticated;
-
-drop policy if exists "Signed-in users can view profiles" on public.profiles;
-create policy "Signed-in users can view profiles"
-on public.profiles for select to authenticated using (true);
-
-drop policy if exists "Users can create their own profile" on public.profiles;
-create policy "Users can create their own profile"
-on public.profiles for insert to authenticated
-with check (id = (select auth.uid()));
-
-drop policy if exists "Users can edit their own profile" on public.profiles;
-create policy "Users can edit their own profile"
-on public.profiles for update to authenticated
-using (id = (select auth.uid()))
-with check (id = (select auth.uid()));
-
-drop policy if exists "Users can see their friendship rows" on public.friendships;
-create policy "Users can see their friendship rows"
-on public.friendships for select to authenticated
-using (requester_id = (select auth.uid()) or addressee_id = (select auth.uid()));
-
-drop policy if exists "Users can send a friend request" on public.friendships;
-create policy "Users can send a friend request"
-on public.friendships for insert to authenticated
-with check (
-  requester_id = (select auth.uid())
-  and addressee_id <> (select auth.uid())
-  and status = 'pending'
-);
-
-drop policy if exists "Participants can remove friendship rows" on public.friendships;
-create policy "Participants can remove friendship rows"
-on public.friendships for delete to authenticated
-using (requester_id = (select auth.uid()) or addressee_id = (select auth.uid()));
-
-drop policy if exists "Friends can read their conversation" on public.messages;
-create policy "Friends can read their conversation"
-on public.messages for select to authenticated
-using (
-  (sender_id = (select auth.uid()) or recipient_id = (select auth.uid()))
-  and public.are_friends(sender_id, recipient_id)
-);
-
-drop policy if exists "Friends can send messages to each other" on public.messages;
-create policy "Friends can send messages to each other"
-on public.messages for insert to authenticated
-with check (
-  sender_id = (select auth.uid())
-  and recipient_id <> (select auth.uid())
-  and public.are_friends(sender_id, recipient_id)
-  and char_length(content) between 1 and 4000
-);
-
-drop policy if exists "Authors can edit their messages while still friends" on public.messages;
-create policy "Authors can edit their messages while still friends"
-on public.messages for update to authenticated
-using (sender_id = (select auth.uid()) and public.are_friends(sender_id, recipient_id))
-with check (
-  sender_id = (select auth.uid())
-  and public.are_friends(sender_id, recipient_id)
-  and char_length(content) between 1 and 4000
-);
-
-drop policy if exists "Authors can delete their messages" on public.messages;
-create policy "Authors can delete their messages"
-on public.messages for delete to authenticated
-using (sender_id = (select auth.uid()));
-
--- Public bucket means profile images can be displayed without a signed URL.
--- Upload/change/delete is restricted to the user's own folder: <auth.uid()>/...
-insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-values ('profile-media', 'profile-media', true, 4194304, array['image/png','image/jpeg','image/webp','image/gif'])
-on conflict (id) do update set public = true, file_size_limit = 4194304,
-  allowed_mime_types = array['image/png','image/jpeg','image/webp','image/gif'];
-
-drop policy if exists "Users upload profile media to own folder" on storage.objects;
-create policy "Users upload profile media to own folder"
-on storage.objects for insert to authenticated
-with check (
-  bucket_id = 'profile-media'
-  and (storage.foldername(name))[1] = (select auth.uid())::text
-);
-
-drop policy if exists "Users update own profile media" on storage.objects;
-create policy "Users update own profile media"
-on storage.objects for update to authenticated
-using (
-  bucket_id = 'profile-media'
-  and (storage.foldername(name))[1] = (select auth.uid())::text
-)
-with check (
-  bucket_id = 'profile-media'
-  and (storage.foldername(name))[1] = (select auth.uid())::text
-);
-
-drop policy if exists "Users delete own profile media" on storage.objects;
-create policy "Users delete own profile media"
-on storage.objects for delete to authenticated
-using (
-  bucket_id = 'profile-media'
-  and (storage.foldername(name))[1] = (select auth.uid())::text
-);
-
--- Realtime subscription used by the client. If this says the table is already
--- in the publication, that is harmless; otherwise enable it in Database > Publications.
-do $$
-begin
-  alter publication supabase_realtime add table public.messages;
-exception when duplicate_object then null;
-end $$;
+create table if not exists public.profiles(id uuid primary key references auth.users(id) on delete cascade,username text not null default 'User',bio text not null default '',avatar_url text,banner_url text,status text not null default 'online' check(status in ('online','idle','dnd','offline')),updated_at timestamptz not null default now());
+create table if not exists public.friendships(id uuid primary key default gen_random_uuid(),user_id uuid not null references public.profiles(id) on delete cascade,friend_id uuid not null references public.profiles(id) on delete cascade,status text not null default 'pending' check(status in ('pending','accepted','rejected')),created_at timestamptz default now(),unique(user_id,friend_id),check(user_id<>friend_id));
+create table if not exists public.servers(id uuid primary key default gen_random_uuid(),name text not null,owner_id uuid not null references public.profiles(id),icon_url text,invite_code text unique not null,created_at timestamptz default now());
+create table if not exists public.server_members(server_id uuid references public.servers(id) on delete cascade,user_id uuid references public.profiles(id) on delete cascade,joined_at timestamptz default now(),primary key(server_id,user_id));
+create table if not exists public.channels(id uuid primary key default gen_random_uuid(),server_id uuid not null references public.servers(id) on delete cascade,name text not null,created_by uuid references public.profiles(id),created_at timestamptz default now());
+create table if not exists public.messages(id uuid primary key default gen_random_uuid(),sender_id uuid not null references public.profiles(id),recipient_id uuid references public.profiles(id),channel_id uuid references public.channels(id) on delete cascade,kind text not null check(kind in ('dm','server')),content text not null check(length(content) between 1 and 4000),created_at timestamptz default now(),edited_at timestamptz,check((kind='dm' and recipient_id is not null and channel_id is null) or (kind='server' and channel_id is not null and recipient_id is null)));
+create index if not exists messages_created_idx on public.messages(created_at);
+alter table public.profiles enable row level security;alter table public.friendships enable row level security;alter table public.servers enable row level security;alter table public.server_members enable row level security;alter table public.channels enable row level security;alter table public.messages enable row level security;
+create policy "Profiles visible to signed in users" on public.profiles for select to authenticated using(true);
+create policy "Users update own profile" on public.profiles for update to authenticated using(auth.uid()=id) with check(auth.uid()=id);
+create policy "Users create own profile" on public.profiles for insert to authenticated with check(auth.uid()=id);
+create policy "Friendships visible to participants" on public.friendships for select to authenticated using(auth.uid()=user_id or auth.uid()=friend_id);
+create policy "Send friend request" on public.friendships for insert to authenticated with check(auth.uid()=user_id);
+create policy "Recipient answers request" on public.friendships for update to authenticated using(auth.uid()=friend_id) with check(auth.uid()=friend_id);
+create policy "Participants can remove friendship" on public.friendships for delete to authenticated using(auth.uid()=user_id or auth.uid()=friend_id);
+create policy "Members see servers" on public.servers for select to authenticated using(owner_id=auth.uid() or exists(select 1 from public.server_members m where m.server_id=id and m.user_id=auth.uid()));
+create policy "Create server" on public.servers for insert to authenticated with check(owner_id=auth.uid());
+create policy "Owner updates server" on public.servers for update to authenticated using(owner_id=auth.uid()) with check(owner_id=auth.uid());
+create policy "Members see membership" on public.server_members for select to authenticated using(user_id=auth.uid() or exists(select 1 from public.server_members m where m.server_id=server_id and m.user_id=auth.uid()));
+create policy "Join own membership" on public.server_members for insert to authenticated with check(user_id=auth.uid());
+create policy "Leave own membership" on public.server_members for delete to authenticated using(user_id=auth.uid());
+create policy "Members see channels" on public.channels for select to authenticated using(exists(select 1 from public.server_members m where m.server_id=server_id and m.user_id=auth.uid()));
+create policy "Members create channels" on public.channels for insert to authenticated with check(created_by=auth.uid() and exists(select 1 from public.server_members m where m.server_id=server_id and m.user_id=auth.uid()));
+create policy "Members see messages" on public.messages for select to authenticated using((kind='dm' and (sender_id=auth.uid() or recipient_id=auth.uid()) and exists(select 1 from public.friendships f where f.status='accepted' and ((f.user_id=sender_id and f.friend_id=recipient_id) or (f.user_id=recipient_id and f.friend_id=sender_id)))) or (kind='server' and exists(select 1 from public.channels c join public.server_members m on m.server_id=c.server_id where c.id=channel_id and m.user_id=auth.uid())));
+create policy "Send own messages" on public.messages for insert to authenticated with check(sender_id=auth.uid() and ((kind='dm' and exists(select 1 from public.friendships f where f.status='accepted' and ((f.user_id=auth.uid() and f.friend_id=recipient_id) or (f.friend_id=auth.uid() and f.user_id=recipient_id)))) or (kind='server' and exists(select 1 from public.channels c join public.server_members m on m.server_id=c.server_id where c.id=channel_id and m.user_id=auth.uid())));
+create policy "Edit own messages" on public.messages for update to authenticated using(sender_id=auth.uid()) with check(sender_id=auth.uid());
+create policy "Delete own messages" on public.messages for delete to authenticated using(sender_id=auth.uid());
+create or replace function public.join_server_by_code(invite_code_input text) returns void language plpgsql security definer set search_path=public as $$ declare sid uuid; begin if auth.uid() is null then raise exception 'Nicht angemeldet'; end if; select id into sid from public.servers where invite_code=invite_code_input; if sid is null then raise exception 'Einladungscode ungültig'; end if; insert into public.server_members(server_id,user_id) values(sid,auth.uid()) on conflict do nothing; end; $$;
+grant execute on function public.join_server_by_code(text) to authenticated;
+insert into storage.buckets(id,name,public,file_size_limit,allowed_mime_types) values('profile-media','profile-media',true,8388608,array['image/png','image/jpeg','image/webp','image/gif']) on conflict(id) do nothing;
+create policy "Public profile media readable" on storage.objects for select using(bucket_id='profile-media');
+create policy "Users upload own profile media" on storage.objects for insert to authenticated with check(bucket_id='profile-media' and (storage.foldername(name))[1]=auth.uid()::text);
+create policy "Users update own profile media" on storage.objects for update to authenticated using(bucket_id='profile-media' and (storage.foldername(name))[1]=auth.uid()::text) with check(bucket_id='profile-media' and (storage.foldername(name))[1]=auth.uid()::text);
+create policy "Users delete own profile media" on storage.objects for delete to authenticated using(bucket_id='profile-media' and (storage.foldername(name))[1]=auth.uid()::text);
